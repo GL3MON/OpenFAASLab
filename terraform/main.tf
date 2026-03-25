@@ -13,7 +13,7 @@ echo "${var.password}" | faas-cli login \
   --password-stdin \
   --gateway ${var.gateway_url}
 
-faas-cli deploy -f ../stack.yml --gateway ${var.gateway_url}
+faas-cli deploy -f ${path.root}/../stack.yml --gateway ${var.gateway_url}
 EOT
   }
 }
