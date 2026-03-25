@@ -5,6 +5,7 @@ on:
     inputs:
       action:
         description: deploy or destroy
+        required: true
         default: deploy
 
 jobs:
@@ -14,18 +15,23 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    # Install k3s
     - name: Install k3s
       run: |
         curl -sfL https://get.k3s.io | sh -
         sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 
-    - name: Wait cluster
+    # Wait for cluster
+    - name: Wait for Kubernetes
       run: |
         export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
         kubectl wait --for=condition=Ready node --all --timeout=180s
+        kubectl get nodes
 
+    # Install Helm
     - uses: azure/setup-helm@v4
 
+    # Install OpenFaaS
     - name: Install OpenFaaS
       run: |
         export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
@@ -44,32 +50,45 @@ jobs:
           --namespace openfaas \
           --set functionNamespace=openfaas-fn
 
-    - name: Wait gateway
+    # Wait for gateway
+    - name: Wait for OpenFaaS gateway
       run: |
         export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
         kubectl rollout status deploy/gateway -n openfaas --timeout=180s
 
-    - name: Port forward
+    # Port forward
+    - name: Port forward gateway
       run: |
         export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
         kubectl port-forward svc/gateway -n openfaas 8080:8080 &
         sleep 10
 
+    # Get real password from cluster
+    - name: Get OpenFaaS password
+      run: |
+        export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+        echo "OPENFAAS_PASSWORD=$(kubectl -n openfaas get secret basic-auth \
+        -o jsonpath='{.data.basic-auth-password}' | base64 --decode)" >> $GITHUB_ENV
+
+    # Install faas-cli
     - name: Install faas-cli
       run: curl -sSL https://cli.openfaas.com | sudo sh
 
+    # Install Terraform
     - uses: hashicorp/setup-terraform@v3
 
+    # Terraform init
     - name: Terraform Init
       run: |
         cd terraform
         terraform init
 
+    # Terraform apply (deploy OR destroy)
     - name: Terraform Apply
       run: |
         cd terraform
         terraform apply -auto-approve \
           -var gateway_url=http://127.0.0.1:8080 \
           -var username=admin \
-          -var password=password \
+          -var password=$OPENFAAS_PASSWORD \
           -var action=${{ github.event.inputs.action }}
