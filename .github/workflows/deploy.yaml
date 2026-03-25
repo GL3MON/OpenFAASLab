@@ -1,66 +1,96 @@
-name: Terraform OpenFaaS CI/CD
+name: OpenFaaS Terraform CI/CD
 
 on:
   workflow_dispatch:
     inputs:
       action:
-        description: deploy or destroy
+        description: "deploy or destroy"
+        required: true
         default: deploy
 
 jobs:
-  deploy:
+  terraform-openfaas:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
 
+    # Install K3s
     - name: Install k3s
       run: |
         curl -sfL https://get.k3s.io | sh -
-        sudo kubectl get nodes
+        sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 
-    - name: Install faas-cli
-      run: curl -sSL https://cli.openfaas.com | sudo sh
+    # Wait for cluster
+    - name: Wait for Kubernetes
+      run: |
+        export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+        kubectl wait --for=condition=Ready node --all --timeout=180s
+        kubectl get nodes
 
+    # Install Helm
+    - name: Install Helm
+      uses: azure/setup-helm@v4
+
+    # Install OpenFaaS
     - name: Install OpenFaaS
       run: |
-        git clone https://github.com/openfaas/faas-netes
-        cd faas-netes
-        kubectl apply -f namespaces.yml
+        export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+
+        kubectl apply -f https://raw.githubusercontent.com/openfaas/faas-netes/master/namespaces.yml
+
         helm repo add openfaas https://openfaas.github.io/faas-netes
         helm repo update
+
+        kubectl -n openfaas create secret generic basic-auth \
+          --from-literal=basic-auth-user=admin \
+          --from-literal=basic-auth-password=password || true
+
         helm upgrade openfaas openfaas/openfaas \
           --install \
           --namespace openfaas \
           --set functionNamespace=openfaas-fn
 
-    - name: Port forward
+    # Wait for OpenFaaS
+    - name: Wait for OpenFaaS
       run: |
+        export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+        kubectl rollout status deploy/gateway -n openfaas --timeout=180s
+
+    # Port forward gateway
+    - name: Port Forward Gateway
+      run: |
+        export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
         kubectl port-forward svc/gateway -n openfaas 8080:8080 &
         sleep 10
 
-    - name: Install Terraform
+    # Install Terraform
+    - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
 
+    # Terraform Init
     - name: Terraform Init
-      run: cd terraform && terraform init
+      run: |
+        cd terraform
+        terraform init
 
+    # Terraform Apply
     - name: Terraform Apply
       if: github.event.inputs.action != 'destroy'
       run: |
         cd terraform
         terraform apply -auto-approve \
-        -var gateway_url=http://127.0.0.1:8080 \
-        -var username=admin \
-        -var password=$(kubectl get secret -n openfaas basic-auth \
-        -o jsonpath="{.data.basic-auth-password}" | base64 --decode)
+          -var gateway_url=http://127.0.0.1:8080 \
+          -var username=admin \
+          -var password=password
 
+    # Terraform Destroy
     - name: Terraform Destroy
       if: github.event.inputs.action == 'destroy'
       run: |
         cd terraform
         terraform destroy -auto-approve \
-        -var gateway_url=http://127.0.0.1:8080 \
-        -var username=admin \
-        -var password=$(kubectl get secret -n openfaas basic-auth \
-        -o jsonpath="{.data.basic-auth-password}" | base64 --decode)
+          -var gateway_url=http://127.0.0.1:8080 \
+          -var username=admin \
+          -var password=password
