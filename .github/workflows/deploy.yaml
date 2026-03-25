@@ -1,0 +1,66 @@
+name: Terraform OpenFaaS CI/CD
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: deploy or destroy
+        default: deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install k3s
+      run: |
+        curl -sfL https://get.k3s.io | sh -
+        sudo kubectl get nodes
+
+    - name: Install faas-cli
+      run: curl -sSL https://cli.openfaas.com | sudo sh
+
+    - name: Install OpenFaaS
+      run: |
+        git clone https://github.com/openfaas/faas-netes
+        cd faas-netes
+        kubectl apply -f namespaces.yml
+        helm repo add openfaas https://openfaas.github.io/faas-netes
+        helm repo update
+        helm upgrade openfaas openfaas/openfaas \
+          --install \
+          --namespace openfaas \
+          --set functionNamespace=openfaas-fn
+
+    - name: Port forward
+      run: |
+        kubectl port-forward svc/gateway -n openfaas 8080:8080 &
+        sleep 10
+
+    - name: Install Terraform
+      uses: hashicorp/setup-terraform@v3
+
+    - name: Terraform Init
+      run: cd terraform && terraform init
+
+    - name: Terraform Apply
+      if: github.event.inputs.action != 'destroy'
+      run: |
+        cd terraform
+        terraform apply -auto-approve \
+        -var gateway_url=http://127.0.0.1:8080 \
+        -var username=admin \
+        -var password=$(kubectl get secret -n openfaas basic-auth \
+        -o jsonpath="{.data.basic-auth-password}" | base64 --decode)
+
+    - name: Terraform Destroy
+      if: github.event.inputs.action == 'destroy'
+      run: |
+        cd terraform
+        terraform destroy -auto-approve \
+        -var gateway_url=http://127.0.0.1:8080 \
+        -var username=admin \
+        -var password=$(kubectl get secret -n openfaas basic-auth \
+        -o jsonpath="{.data.basic-auth-password}" | base64 --decode)
