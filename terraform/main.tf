@@ -1,8 +1,11 @@
 variable "gateway_url" {}
 variable "username" {}
 variable "password" {}
+variable "action" {}
 
 resource "null_resource" "deploy" {
+  count = var.action == "deploy" ? 1 : 0
+
   provisioner "local-exec" {
     command = <<EOT
 echo "${var.password}" | faas-cli login \
@@ -16,8 +19,9 @@ EOT
 }
 
 resource "null_resource" "destroy" {
+  count = var.action == "destroy" ? 1 : 0
+
   provisioner "local-exec" {
-    when    = destroy
     command = <<EOT
 echo "${var.password}" | faas-cli login \
   --username ${var.username} \

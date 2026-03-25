@@ -14,21 +14,18 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    # install k3s
     - name: Install k3s
       run: |
         curl -sfL https://get.k3s.io | sh -
         sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 
-    - name: Wait for cluster
+    - name: Wait cluster
       run: |
         export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
         kubectl wait --for=condition=Ready node --all --timeout=180s
 
-    # install helm
     - uses: azure/setup-helm@v4
 
-    # install openfaas
     - name: Install OpenFaaS
       run: |
         export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
@@ -47,7 +44,7 @@ jobs:
           --namespace openfaas \
           --set functionNamespace=openfaas-fn
 
-    - name: Wait for gateway
+    - name: Wait gateway
       run: |
         export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
         kubectl rollout status deploy/gateway -n openfaas --timeout=180s
@@ -58,11 +55,9 @@ jobs:
         kubectl port-forward svc/gateway -n openfaas 8080:8080 &
         sleep 10
 
-    # install faas-cli
     - name: Install faas-cli
       run: curl -sSL https://cli.openfaas.com | sudo sh
 
-    # install terraform
     - uses: hashicorp/setup-terraform@v3
 
     - name: Terraform Init
@@ -71,19 +66,10 @@ jobs:
         terraform init
 
     - name: Terraform Apply
-      if: github.event.inputs.action != 'destroy'
       run: |
         cd terraform
         terraform apply -auto-approve \
           -var gateway_url=http://127.0.0.1:8080 \
           -var username=admin \
-          -var password=password
-
-    - name: Terraform Destroy
-      if: github.event.inputs.action == 'destroy'
-      run: |
-        cd terraform
-        terraform destroy -auto-approve \
-          -var gateway_url=http://127.0.0.1:8080 \
-          -var username=admin \
-          -var password=password
+          -var password=password \
+          -var action=${{ github.event.inputs.action }}
