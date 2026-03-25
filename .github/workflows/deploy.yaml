@@ -4,36 +4,31 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "deploy or destroy"
-        required: true
+        description: deploy or destroy
         default: deploy
 
 jobs:
-  terraform-openfaas:
+  openfaas:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-    # Install K3s
+    # install k3s
     - name: Install k3s
       run: |
         curl -sfL https://get.k3s.io | sh -
         sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 
-    # Wait for cluster
-    - name: Wait for Kubernetes
+    - name: Wait for cluster
       run: |
         export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
         kubectl wait --for=condition=Ready node --all --timeout=180s
-        kubectl get nodes
 
-    # Install Helm
-    - name: Install Helm
-      uses: azure/setup-helm@v4
+    # install helm
+    - uses: azure/setup-helm@v4
 
-    # Install OpenFaaS
+    # install openfaas
     - name: Install OpenFaaS
       run: |
         export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
@@ -52,30 +47,29 @@ jobs:
           --namespace openfaas \
           --set functionNamespace=openfaas-fn
 
-    # Wait for OpenFaaS
-    - name: Wait for OpenFaaS
+    - name: Wait for gateway
       run: |
         export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
         kubectl rollout status deploy/gateway -n openfaas --timeout=180s
 
-    # Port forward gateway
-    - name: Port Forward Gateway
+    - name: Port forward
       run: |
         export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
         kubectl port-forward svc/gateway -n openfaas 8080:8080 &
         sleep 10
 
-    # Install Terraform
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
+    # install faas-cli
+    - name: Install faas-cli
+      run: curl -sSL https://cli.openfaas.com | sudo sh
 
-    # Terraform Init
+    # install terraform
+    - uses: hashicorp/setup-terraform@v3
+
     - name: Terraform Init
       run: |
         cd terraform
         terraform init
 
-    # Terraform Apply
     - name: Terraform Apply
       if: github.event.inputs.action != 'destroy'
       run: |
@@ -85,7 +79,6 @@ jobs:
           -var username=admin \
           -var password=password
 
-    # Terraform Destroy
     - name: Terraform Destroy
       if: github.event.inputs.action == 'destroy'
       run: |
